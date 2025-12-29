@@ -1,45 +1,43 @@
-name: Збірка і деплой
+name: Build and Deploy
 
 on:
   push:
-    branches: ["main"]
+    branches:
+      - main
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Отримати код
+    - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Логін у ACR
+    - name: Login to ACR
       run: |
         echo "${{ secrets.AZURE_CLIENT_SECRET }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} \
         -u ${{ secrets.AZURE_CLIENT_ID }} --password-stdin
 
-    - name: Зібрати і пуш образів
+    - name: Build and Push Images
       run: |
         for service in vote result worker; do
           docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest ./$service
           docker push ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest
         done
 
-    - name: Оновити compose файл
+    - name: Update Compose File
       run: |
-        # Виконуємо вимогу: прибираємо build і ставимо свій image для кожного сервісу
-        # Для vote
+        # Видаляємо build та замінюємо image на версію з ACR
         sed -i '/build: .\/vote/d' docker-compose.yml
-        sed -i "s|image: mcr.microsoft.com/azuredocs/azure-vote-front:v1|image: ${{ secrets.ACR_LOGIN_SERVER }}/vote:latest|g" docker-compose.yml || sed -i "s|image: .*vote.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/vote:latest|g" docker-compose.yml
+        sed -i "s|image: .*vote.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/vote:latest|g" docker-compose.yml
         
-        # Для result
         sed -i '/build: .\/result/d' docker-compose.yml
         sed -i "s|image: .*result.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/result:latest|g" docker-compose.yml
         
-        # Для worker
         sed -i '/build: .\/worker/d' docker-compose.yml
         sed -i "s|image: .*worker.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/worker:latest|g" docker-compose.yml
 
-    - name: Копіювання compose на VM
+    - name: Copy to VM
       uses: appleboy/scp-action@v0.1.7
       with:
         host: ${{ secrets.VM_HOST }}
@@ -48,7 +46,7 @@ jobs:
         source: "docker-compose.yml"
         target: "app/"
 
-    - name: Деплой через SSH
+    - name: Deploy via SSH
       uses: appleboy/ssh-action@v1.0.3
       with:
         host: ${{ secrets.VM_HOST }}
