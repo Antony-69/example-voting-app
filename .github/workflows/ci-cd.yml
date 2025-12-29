@@ -16,7 +16,6 @@ jobs:
       uses: azure/docker-login@v1
       with:
         login-server: ${{ secrets.ACR_LOGIN_SERVER }}
-        # Переконайтеся, що ви додали ці два секрети (ID та SECRET)
         username: ${{ secrets.AZURE_CLIENT_ID }}
         password: ${{ secrets.AZURE_CLIENT_SECRET }}
 
@@ -29,9 +28,10 @@ jobs:
 
     - name: Оновити compose файл
       run: |
+        # Ми замінюємо рядок 'build: ./сервіс' на рядок 'image: адреса_реєстру/сервіс:latest'
+        # Це гарантує, що у кожного сервісу буде вказано образ для завантаження
         for service in vote result worker; do
-          sed -i "/build: .\/$service/d" docker-compose.yml
-          sed -i "s|image: .*$service.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest|g" docker-compose.yml
+          sed -i "s|build: .\/$service|image: ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest|g" docker-compose.yml
         done
 
     - name: Копіювання compose на VM
@@ -39,7 +39,7 @@ jobs:
       with:
         host: ${{ secrets.VM_HOST }}
         username: ${{ secrets.VM_USER }}
-        key: ${{ secrets.VM_SSH_KEY }} # ЗМІНЕНО ПІД ВАШ СЕКРЕТ
+        key: ${{ secrets.VM_SSH_KEY }}
         source: "docker-compose.yml"
         target: "app/"
 
@@ -48,9 +48,10 @@ jobs:
       with:
         host: ${{ secrets.VM_HOST }}
         username: ${{ secrets.VM_USER }}
-        key: ${{ secrets.VM_SSH_KEY }} # ЗМІНЕНО ПІД ВАШ СЕКРЕТ
+        key: ${{ secrets.VM_SSH_KEY }}
         script: |
           mkdir -p app && cd app
+          # Логінимося в ACR на самій VM, щоб вона могла завантажити (pull) приватні образи
           echo "${{ secrets.AZURE_CLIENT_SECRET }}" | sudo docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.AZURE_CLIENT_ID }} --password-stdin
           sudo docker compose pull
           sudo docker compose up -d --remove-orphans
