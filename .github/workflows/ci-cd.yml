@@ -1,1 +1,62 @@
+name: Збірка і деплой
 
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Отримати код
+      uses: actions/checkout@v4
+
+    - name: Логін у ACR
+      run: |
+        echo "${{ secrets.AZURE_CLIENT_SECRET }}" | docker login ${{ secrets.ACR_LOGIN_SERVER }} \
+        -u ${{ secrets.AZURE_CLIENT_ID }} --password-stdin
+
+    - name: Зібрати і пуш образів
+      run: |
+        for service in vote result worker; do
+          docker build -t ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest ./$service
+          docker push ${{ secrets.ACR_LOGIN_SERVER }}/$service:latest
+        done
+
+    - name: Оновити compose файл
+      run: |
+        # Виконуємо вимогу: прибираємо build і ставимо свій image для кожного сервісу
+        # Для vote
+        sed -i '/build: .\/vote/d' docker-compose.yml
+        sed -i "s|image: mcr.microsoft.com/azuredocs/azure-vote-front:v1|image: ${{ secrets.ACR_LOGIN_SERVER }}/vote:latest|g" docker-compose.yml || sed -i "s|image: .*vote.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/vote:latest|g" docker-compose.yml
+        
+        # Для result
+        sed -i '/build: .\/result/d' docker-compose.yml
+        sed -i "s|image: .*result.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/result:latest|g" docker-compose.yml
+        
+        # Для worker
+        sed -i '/build: .\/worker/d' docker-compose.yml
+        sed -i "s|image: .*worker.*|image: ${{ secrets.ACR_LOGIN_SERVER }}/worker:latest|g" docker-compose.yml
+
+    - name: Копіювання compose на VM
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.VM_HOST }}
+        username: ${{ secrets.VM_USER }}
+        key: ${{ secrets.VM_KEY }}
+        source: "docker-compose.yml"
+        target: "app/"
+
+    - name: Деплой через SSH
+      uses: appleboy/ssh-action@v1.0.3
+      with:
+        host: ${{ secrets.VM_HOST }}
+        username: ${{ secrets.VM_USER }}
+        key: ${{ secrets.VM_KEY }}
+        script: |
+          mkdir -p app && cd app
+          echo "${{ secrets.AZURE_CLIENT_SECRET }}" | sudo docker login ${{ secrets.ACR_LOGIN_SERVER }} -u ${{ secrets.AZURE_CLIENT_ID }} --password-stdin
+          sudo docker compose pull
+          sudo docker compose up -d --remove-orphans
+          sudo docker compose ps
